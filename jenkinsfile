@@ -1,0 +1,62 @@
+pipeline{
+    agent any
+       environment{
+           scannerHome = tool 'mysonar'
+       }
+        stages{
+            stage('code'){
+                steps{
+                   git 'https://github.com/chityalahanija/ltibbhackathon.git'
+                }
+            }
+            stage('CQA'){
+                steps{
+                    withSonarQubeEnv('mysonar') {
+                    sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=kubernetes"
+                    }
+                }
+            }
+        stage('Qualitygate'){
+            steps{
+                waitForQualityGate abortPipeline: false, credentialsId: 'sonar'
+            }
+        }
+        stage('Image'){
+            steps{
+                sh 'docker build -t appimage:app .'
+                sh 'docker build -t dbimage:db database'
+            }
+        }
+        stage('Tags'){
+            steps{
+            sh 'docker tag dbimage:db srinija16/bloodapp:db'
+            sh 'docker tag appimage:app srinija16/bloodapp:app'
+        }
+        }
+        stage('Image Push'){
+            steps{
+                withDockerRegistry(credentialsId: 'c6144433-c42b-4c0c-836d-67ecba4af9d5'){
+                sh 'docker push srinija16/bloodapp:db'
+                sh 'docker push srinija16/bloodapp:app'
+                }
+            }
+        }    
+        stage('Deploy'){
+            steps{
+                sh 'docker run -d --name mysqldb -p 3306:3306 srinija16/bloodapp:db'
+                sh 'docker run -d --name app -p 1111:80 --link mysqldb:mysqlcon srinija16/bloodapp:app '
+            }
+        }
+        stage('Deploy to kubernetes'){
+            steps{
+                withKubeConfig(caCertificate: '', clusterName: 'flm.k8s.local', contextName: '', credentialsId: 'kubernetescredentials', namespace: 'default', restrictKubeConfigAccess: false, serverUrl: 'https://api-flm-k8s-local-v47q65-9d27573aecadf93f.elb.us-east-1.amazonaws.com') {
+                    sh '''
+                      kubectl get nodes
+                      kubectl apply -f manifestfiles/
+                      kubectl get pods
+                    '''
+                }
+            }
+        }
+        }
+    }
